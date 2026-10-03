@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f7f6f2" />
+    <title>页间 · 本地 PDF 阅读器</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css" crossorigin="anonymous" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <div class="brand-mark">页</div>
+          <div>
+            <div class="brand-name">页间</div>
+            <div class="brand-subtitle">本地 PDF 阅读器</div>
+          </div>
+        </div>
+        <div class="top-actions"><button id="homeButton" class="button button-ghost">返回书库</button>
+          <button id="openPdfButton" class="button button-primary"><span class="button-icon">＋</span> 导入 PDF</button>
+          <button id="settingsButton" class="button button-ghost">设置</button>
+          <button id="ollamaStatus" class="status-pill status-idle" type="button" title="检查或切换本地模型连接"><span class="status-dot"></span><span>检查本地模型</span></button>
+        </div>
+      </header>
+
+      <section id="libraryHome" class="library-home">
+ <nav class="library-menu"><h2>我的书库</h2><button data-library="home">首页</button><button data-library="all">全部书籍</button><button data-library="recent">最近阅读</button></nav>
+ <main class="library-main"><h1 id="libraryHeading">继续阅读</h1><p>阅读进度自动保存，点击书籍即可继续。</p><div id="bookGrid" class="book-grid"></div></main>
+ </section>
+ <div class="workspace" hidden>
+        <aside class="sidebar left-sidebar">
+          <section class="panel-section document-section">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">DOCUMENT</span>
+                <h2>文档结构</h2>
+              </div>
+              <span id="pageCountLabel" class="count-label">—</span>
+            </div>
+            <div id="documentName" class="document-name muted">还没有打开 PDF</div>
+            <div id="outlineList" class="outline-list">
+              <div class="empty-small">导入 PDF 后，这里会显示目录和页面。</div>
+            </div>
+          </section>
+
+          <section class="panel-section annotation-section">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">ANNOTATIONS</span>
+                <h2>标注与笔记</h2>
+              </div>
+              <span id="annotationCountLabel" class="count-label">0</span>
+            </div>
+            <div id="annotationList" class="annotation-list">
+              <div class="empty-small">选择文字后，可以添加高亮或笔记。</div>
+            </div>
+          </section>
+        </aside>
+
+        <main class="reader-column">
+          <div class="reader-toolbar">
+            <div class="page-controls">
+              <button id="previousPageButton" class="icon-button" aria-label="上一页">‹</button>
+              <label class="page-indicator"><input id="pageNumberInput" type="number" min="1" value="1" /><span>/</span><span id="totalPagesLabel">—</span></label>
+              <button id="nextPageButton" class="icon-button" aria-label="下一页">›</button>
+            </div>
+            <div class="reader-tools">
+              <button id="zoomOutButton" class="icon-button" aria-label="缩小">−</button>
+              <span id="zoomLabel" class="zoom-label">120%</span>
+              <button id="zoomInButton" class="icon-button" aria-label="放大">＋</button>
+              <button id="fitWidthButton" class="button button-ghost button-small">适合宽度</button>
+              <div class="divider"></div>
+              <label class="search-field"><span class="search-icon">⌕</span><input id="searchInput" type="search" placeholder="搜索文档" /></label>
+            </div>
+          </div>
+          <div id="pdfViewport" class="pdf-viewport">
+            <div id="emptyReader" class="empty-reader">
+              <div class="empty-reader-icon">▤</div>
+              <h1>从一份 PDF 开始</h1>
+              <p>导入文档后，在中间阅读，在右侧让本地模型帮你翻译、解释和推导公式。</p>
+              <button id="emptyOpenButton" class="button button-primary">选择 PDF 文件</button>
+              <div class="local-note"><span class="lock-icon">⌁</span> 文档内容与模型请求默认留在本机</div>
+            </div>
+          </div>
+          <div id="selectionToolbar" class="selection-toolbar" aria-hidden="true">
+            <button data-selection-action="translate">翻译</button>
+            <button data-selection-action="explain">解释</button>
+            <button data-selection-action="summarize">摘要</button>
+            <button data-selection-action="ask">问 AI</button>
+            <span class="toolbar-divider"></span>
+            <button data-selection-action="highlight">高亮</button>
+            <button data-selection-action="note">笔记</button>
+          </div>
+        </main>
+
+        <aside class="ai-panel">
+          <div class="ai-panel-header">
+            <div>
+              <span class="eyebrow">LOCAL ASSISTANT</span>
+              <h2>阅读助手</h2>
+            </div>
+            <span id="modelNameChip" class="model-chip">qwen3.5:9b-mlx</span>
+          </div>
+          <div class="ai-panel-body">
+            <div class="chat-context">
+              <div class="selection-card">
+                <div class="selection-card-heading"><span>当前上下文</span><button id="clearSelectionButton" class="text-button">清除</button></div>
+                <div id="selectedText" class="selected-text muted">在 PDF 中选择文字后，这里会成为当前对话的引用。</div>
+              </div>
+              <div class="context-strip">
+                <div class="context-strip-heading"><span>发送给模型的上下文</span><span class="context-hint">可查看 / 可关闭</span></div>
+                <div id="contextChips" class="context-chips">
+                  <button class="context-chip required" data-context="selection">选中文字 · 必选</button>
+                  <button class="context-chip" data-context="paragraph">当前段落</button>
+                  <button class="context-chip disabled" data-context="chapter" disabled>章节摘要 · 待生成</button>
+                  <button class="context-chip disabled" data-context="global" disabled>全文摘要 · 待生成</button>
+                </div>
+              </div>
+            </div>
+            <div id="conversationHistory" class="conversation-history">
+              <div id="emptyConversation" class="conversation-empty"><div class="response-placeholder-icon">✦</div><p>这里是你和本地模型的对话。</p><span>可以直接提问，也可以先在 PDF 中选择文字。</span></div>
+            </div>
+            <div class="question-composer">
+              <div class="composer-label">对当前内容提问 <span>⌘↵ 发送</span></div>
+              <textarea id="questionInput" rows="3" placeholder="例如：这一步为什么可以这样变形？"></textarea>
+              <button id="askButton" class="send-button" aria-label="发送问题">↑</button>
+            </div>
+          </div>
+          <div class="ai-panel-footer"><span class="tiny-dot"></span> Ollama 本地连接 · 无需云端 API</div>
+        </aside>
+      </div>
+    </div>
+
+    <input id="fileInput" type="file" accept="application/pdf,.pdf" hidden />
+
+    <dialog id="settingsDialog" class="settings-dialog">
+      <form method="dialog" id="settingsForm">
+        <div class="dialog-header"><div><span class="eyebrow">SETTINGS</span><h2>本地模型设置</h2></div><button value="cancel" class="dialog-close">×</button></div>
+        <p class="dialog-copy">应用默认通过同源本地桥接连接 Ollama，不经过云端。默认配置适合你现在的 <strong>qwen3.5:9b-mlx</strong>。</p>
+        <label class="form-label">本地连接地址<input id="baseUrlInput" type="text" value="/api" /></label>
+        <label class="form-label">模型名称<input id="modelInput" type="text" value="qwen3.5:9b-mlx" /></label>
+        <div class="dialog-actions"><button value="cancel" class="button button-ghost">取消</button><button id="saveSettingsButton" value="default" class="button button-primary">保存设置</button></div>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status"></div>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js" crossorigin="anonymous"></script>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,34 @@
+{
+  "name": "yejian",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Local PDF reader with Ollama",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "prepare:web": "node scripts/prepare.cjs",
+    "start": "node scripts/prepare.cjs && electron .",
+    "pack": "node scripts/prepare.cjs && electron-builder --mac dir --arm64"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3",
+    "pdfjs-dist": "4.10.38",
+    "katex": "0.16.22"
+  },
+  "build": {
+    "appId": "com.yejian.reader",
+    "productName": "YeJian",
+    "directories": {
+      "output": "outputs/desktop"
+    },
+    "files": [
+      "desktop/**",
+      "web/**",
+      "package.json"
+    ],
+    "mac": {
+      "identity": null,
+      "category": "public.app-category.productivity"
+    }
+  }
+}
