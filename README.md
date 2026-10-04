@@ -1,8 +1,8 @@
 # 页间（YeJian）
 
-页间是一款面向 macOS 的本地优先 PDF 阅读助手。在 PDF 中选择文字，直接在右侧向本地大模型提问，不需要把内容复制到另一个聊天窗口。
+页间是一款面向 macOS 和 Windows 的本地优先 PDF 阅读助手。它参考了 [Marginalia](https://github.com/EurFelux/marginalia) 的选区问答思路：在 PDF 中选择文字，直接在右侧向本地大模型提问，不需要把内容复制到另一个聊天窗口。
 
-项目当前使用 PDF.js 阅读 PDF，使用 Ollama 连接本地模型。翻译、上下文解释、段落摘要、公式推导和自由提问都在本机完成；PDF 从本机读取，标注、对话记录和设置保存在浏览器本地。当前版本是浏览器 Demo，尚未封装为原生 macOS App。
+项目当前使用 PDF.js 阅读 PDF，使用 Ollama 连接本地模型。翻译、上下文解释、段落摘要、公式推导和自由提问都在本机完成；PDF 从本机读取，标注、对话记录和设置保存在浏览器本地。提供 Electron 桌面测试版，也保留浏览器 Demo。Windows 安装、打包与验收见 [WINDOWS.md](WINDOWS.md)。
 
 ## 当前功能
 
@@ -105,13 +105,35 @@ PYTHONPYCACHEPREFIX=/tmp/pdf-studio-pycache python3 -m py_compile server.py
 
 浏览器端目前是无构建步骤的原生 JavaScript 项目，修改 `app.js`、`styles.css` 或 `index.html` 后重新加载页面即可看到变化。
 
+## 发布到 GitHub
+
+先在 GitHub 创建一个空仓库，不要预先勾选 README、License 或 `.gitignore`。然后在项目目录中运行：
+
+```bash
+git init -b main
+git add .
+git commit -m "Initial release"
+git remote add origin https://github.com/YOUR_NAME/YOUR_REPOSITORY.git
+git push -u origin main
+```
+
+把 `YOUR_NAME/YOUR_REPOSITORY` 换成你的 GitHub 用户名和仓库名。之后每次修改可以使用：
+
+```bash
+git status
+git add .
+git commit -m "Describe the change"
+git push
+```
+
+面向别人下载的 ZIP 建议作为 GitHub Release 附件上传，而不是把每个生成的 ZIP 都提交到源码历史。发布前请补充你选择的开源许可证；如果希望别人可以自由修改和再发布，可以考虑 MIT License。
+
 ## 后续计划
 
-- 阅读位置恢复
 - 更完整的 Markdown 笔记本和章节/全文摘要
 - 多文档工作区
 - 更稳定的扫描版文字层和图表理解
-- 原生 macOS `.app` / `.dmg` 打包
+- 桌面版签名、安装包与实机验收
 - GitHub Actions 自动检查和发布
 
 ## 当前限制
@@ -140,9 +162,3 @@ pnpm run pack
 启动后进入书库首页，侧边菜单可切换首页、全部书籍和最近阅读。导入 PDF 后会保存一份本地副本，并生成第一页封面。阅读过程中自动保存页码、缩放和页内位置，点击“返回书库”后可以切换书籍；重启后点击书籍继续阅读。
 
 PDF 副本和阅读进度存于 IndexedDB，在桌面版中位于应用的用户数据目录。每次导入使用独立编号，笔记与对话也随编号区分；重复导入会创建另一条书籍记录。旧版按文件名保存的记录暂不自动迁移。清除应用数据会清除书库，请保留原 PDF。
-
-
-## License
-
-本项目原创代码采用 [MIT License](LICENSE)。
-第三方组件及引用代码遵循各自的许可证。

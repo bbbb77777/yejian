@@ -23,3 +23,5 @@ export async function patchBook(id, fields) {
   tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);
  });
 }
+
+export const deleteBook = id => transaction('readwrite', s => s.delete(id));

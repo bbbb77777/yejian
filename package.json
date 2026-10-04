@@ -7,7 +7,9 @@
   "scripts": {
     "prepare:web": "node scripts/prepare.cjs",
     "start": "node scripts/prepare.cjs && electron .",
-    "pack": "node scripts/prepare.cjs && electron-builder --mac dir --arm64"
+    "pack": "node scripts/prepare.cjs && electron-builder --mac dir --arm64",
+    "pack:win": "node scripts/prepare.cjs && electron-builder --win zip --x64",
+    "test": "node --test tests/*.test.cjs"
   },
   "devDependencies": {
     "electron": "44.5.1",
@@ -29,6 +31,18 @@
     "mac": {
       "identity": null,
       "category": "public.app-category.productivity"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false,
+      "artifactName": "YeJian-${version}-windows-${arch}.${ext}"
     }
   }
 }

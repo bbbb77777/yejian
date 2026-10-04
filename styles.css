@@ -90,7 +90,7 @@ h2 { margin: 4px 0 0; font-size: 15px; letter-spacing: -.01em; }
 .page-shell canvas { display: block; }
 .text-layer, .highlight-layer { position: absolute; inset: 0; overflow: hidden; }
 .text-layer { user-select: text; color: transparent; line-height: 1; }
-.text-layer span { position: absolute; display: block; white-space: pre; transform-origin: left bottom; cursor: text; }
+.text-layer span { position: absolute; white-space: pre; transform-origin: 0 0; cursor: text; }
 .text-layer span::selection { color: transparent; background: rgba(197,109,72,.25); }
 .highlight-layer { pointer-events: none; }
 .highlight-rect { position: absolute; border-radius: 3px; background: rgba(249,213,95,.47); box-shadow: inset 0 -1px rgba(189,150,37,.22); }
@@ -134,3 +134,40 @@ h2 { margin: 4px 0 0; font-size: 15px; letter-spacing: -.01em; }
 .book-card strong { display:block; margin-top:12px; overflow-wrap:anywhere; }
 .book-card small { display:block; margin-top:8px; color:var(--muted); }
 .book-card progress { width:100%; margin-top:12px; accent-color:var(--accent); }
+
+/* PDF.js TextLayer requires intrinsic span widths for its font scaling. */
+.text-layer { text-align: initial; text-size-adjust: none; forced-color-adjust: none; transform-origin: 0 0; }
+.text-layer :is(span, br) { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0 0; }
+.text-layer span.markedContent { top: 0; height: 0; }
+.text-layer br::selection { background: transparent; }
+button:disabled { cursor: default; opacity: .45; }
+:root[data-theme="dark"] {
+ color-scheme: dark; --canvas:#17191d; --paper:#22252b; --ink:#eeeae4; --muted:#b6b1a9;
+ --line:#3c4048; --line-strong:#585e68; --accent:#e69b76; --accent-dark:#f0b18f; --accent-soft:#44332d;
+ --shadow:0 12px 40px #0005;
+}
+[data-theme="dark"] :is(.topbar,.sidebar,.ai-panel,.reader-toolbar,.selection-toolbar,.scan-page-tools,.conversation-entry,.form-label input,.question-composer textarea,.page-placeholder,.context-card) { background:var(--paper); color:var(--ink); }
+[data-theme="dark"] :is(.conversation-content,.outline-item,.selection-toolbar button,.form-label,.dialog-copy,.ocr-text,.library-menu button,.book-card,.icon-button,.page-indicator input,.search-field input) { color:var(--ink); }
+[data-theme="dark"] :is(.conversation-entry.user,.button-soft,.context-chip,.rich-text code,.math-fallback,.toast,.status-pill) { background:var(--accent-soft); color:var(--ink); border-color:var(--line); }
+[data-theme="dark"] :is(input,textarea,.button-ghost:hover,.search-field,.model-chip) { background:var(--paper); color:var(--ink); }
+[data-theme="dark"] .pdf-viewport { background:var(--canvas); }
+/* Keep PDF images and printed colors intact; only the surrounding interface changes. */
+
+.outline-row { display:flex; align-items:center; min-width:0; }
+.outline-row .outline-item { flex:1; min-width:0; }
+.outline-toggle { flex:0 0 24px; border:0; padding:7px 3px; color:var(--ink); background:transparent; }
+.outline-children { margin-left:12px; padding-left:5px; border-left:1px solid var(--line); }
+.outline-children[hidden] { display:none; }
+.annotation-remove { margin-top:7px; border:1px solid var(--line); border-radius:5px; padding:4px 7px; color:var(--accent-dark); background:var(--paper); font-size:11px; }
+.annotation-remove:hover { background:var(--accent-soft); }
+
+.highlight-menu { position:fixed; z-index:100; display:flex; gap:8px; padding:8px; border:1px solid var(--line-strong); border-radius:9px; background:var(--paper); box-shadow:var(--shadow); }
+.highlight-menu[hidden] { display:none; }
+.highlight-menu button { padding:8px 12px; border:1px solid var(--line); border-radius:6px; color:var(--ink); background:var(--paper); }
+.highlight-menu button:first-child { color:var(--accent-dark); background:var(--accent-soft); }
+
+button.brand-mark { border:0; flex-shrink:0; }
+button.brand-mark:hover { outline:2px solid var(--accent); outline-offset:2px; }
+.book-open { display:block; width:100%; padding:0; border:0; color:var(--ink); background:transparent; text-align:left; }
+.book-remove { margin-top:14px; padding:6px 10px; border:1px solid var(--line); border-radius:6px; color:var(--accent-dark); background:var(--paper); }
+.book-remove:hover { background:var(--accent-soft); }

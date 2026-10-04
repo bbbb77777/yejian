@@ -1,4 +1,6 @@
-import { listBooks, getBook, putBook, patchBook } from "./library.js";
+import { findHighlightAt } from "./highlight-hit.mjs";
+import { groupOutline } from "./outline.mjs";
+import { listBooks, getBook, putBook, patchBook, deleteBook } from "./library.js";
 import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs";
 
 const PDF_WORKER = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
@@ -27,7 +29,7 @@ const state = {
   textCache: new Map(), annotations: [], documentKey: "", aiBusy: false, paragraphContext: "",
   contextToggles: { selection: true, paragraph: true, chapter: false, global: false },
   baseUrl: defaultBaseUrl, modelEnabled: localStorage.getItem("pdf-studio-model-enabled") !== "false",
-  model: localStorage.getItem("pdf-studio-model") || "qwen3.5:9b-mlx", liveMessage: null, rendering: false,
+  model: localStorage.getItem("pdf-studio-model") || "", liveMessage: null, rendering: false,
   chatMessages: [], pageObserver: null, ocrBusy: false
 };
 
@@ -61,13 +63,23 @@ function renderStoredChatHistory() {
 
 function setStatus(type, label) { els.status.className = `status-pill status-${type}`; els.status.querySelector("span:last-child").textContent = label; els.status.setAttribute("aria-label", label); }
 
+function adoptInstalledModel(data) {
+  if (!state.model && data.models?.length) {
+    state.model = data.models[0].name;
+    localStorage.setItem("pdf-studio-model", state.model);
+  }
+  els.modelChip.textContent = state.model || "请先安装模型";
+}
+
 async function checkOllama(autoStart = false) {
+  state.connected = false;
   if (!state.modelEnabled) { setStatus("idle", "连接已关闭 · 点击开启"); return false; }
   try {
     const statusUrl = state.baseUrl.startsWith("/") ? `${state.baseUrl.replace(/\/$/, "")}/ollama-status` : `${state.baseUrl.replace(/\/v1\/?$/, "")}/api/tags`;
     const response = await fetch(statusUrl, { signal: AbortSignal.timeout(2500) });
     if (!response.ok) throw new Error("not ready");
-    setStatus("ready", "Ollama 已连接 · 点击断开"); state.connectionMode = "bridge"; return true;
+    adoptInstalledModel(await response.json());
+    state.connected = true; setStatus("ready", "Ollama 已连接 · 点击断开"); state.connectionMode = "bridge"; return true;
   } catch (primaryError) {
     // Older copies of the demo may be served without server.py. Fall back to
     // Ollama's local endpoint so the chat still works when CORS is permitted.
@@ -75,14 +87,15 @@ async function checkOllama(autoStart = false) {
       try {
         const direct = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(2500) });
         if (!direct.ok) throw new Error("direct Ollama is not ready");
-        setStatus("ready", "Ollama 已连接 · 点击断开"); state.connectionMode = "direct"; return true;
+        adoptInstalledModel(await direct.json());
+        state.connected = true; setStatus("ready", "Ollama 已连接 · 点击断开"); state.connectionMode = "direct"; return true;
       } catch { /* try the bridge start action below */ }
     }
     if (autoStart && state.baseUrl.startsWith("/")) {
       setStatus("idle", "正在启动 Ollama…");
       try {
         const response = await fetch(`${state.baseUrl.replace(/\/$/, "")}/ollama-start`, { method: "POST", signal: AbortSignal.timeout(10000) });
-        if (response.ok) { setStatus("ready", "Ollama 已连接 · 点击断开"); state.connectionMode = "bridge"; return true; }
+        if (response.ok) return checkOllama(false);
       } catch { /* fall through to a clear status */ }
     }
     const hint = primaryError?.message?.includes("404") ? "本地桥接未启动 · 点击连接" : "Ollama 未连接 · 点击连接";
@@ -91,7 +104,7 @@ async function checkOllama(autoStart = false) {
 }
 
 async function toggleModelConnection() {
-  if (state.modelEnabled) { state.modelEnabled = false; localStorage.setItem("pdf-studio-model-enabled", "false"); setStatus("idle", "连接已关闭 · 点击开启"); toast("已断开阅读器与本地模型的连接"); return; }
+  if (state.modelEnabled && state.connected) { state.connected = false; state.modelEnabled = false; localStorage.setItem("pdf-studio-model-enabled", "false"); setStatus("idle", "连接已关闭 · 点击开启"); toast("已断开阅读器与本地模型的连接"); return; }
   state.modelEnabled = true; localStorage.setItem("pdf-studio-model-enabled", "true"); const connected = await checkOllama(true); if (connected) toast("已连接本地模型");
 }
 
@@ -113,7 +126,7 @@ async function loadPdf(file, saved = null) {
       await page.render({canvasContext:cover.getContext('2d'),viewport:view}).promise;book.cover=cover.toDataURL('image/jpeg',0.7);
       await putBook(book);
     }
-    state.pageObserver?.disconnect(); els.pdfViewport.replaceChildren(); clearSelection();
+    state.pageObserver?.disconnect(); els.pdfViewport.replaceChildren(); clearSelection(); readingHistory.length = 0; $("#backButton").disabled = true;
     state.pdf = pdf; state.bookId=book.id; state.scale=book.scale || 1.2;
     document.querySelector('#libraryHome').hidden=true;document.querySelector('.workspace').hidden=false;
     els.zoomLabel.textContent=`${Math.round(state.scale*100)}%`;
@@ -147,17 +160,29 @@ async function resolveDestination(dest) {
   try { const resolved = typeof dest === "string" ? await state.pdf.getDestination(dest) : dest; if (!resolved) return null; return (await state.pdf.getPageIndex(resolved[0])) + 1; } catch { return null; }
 }
 
-async function appendOutline(items, container, depth = 0) {
+async function appendOutline(items, container) {
   for (const item of items || []) {
-    const page = await resolveDestination(item.dest); const button = makeOutlineButton(item.title, page || 1, depth); container.append(button);
-    if (item.items?.length) await appendOutline(item.items, container, depth + 1);
+    const page = await resolveDestination(item.dest);
+    const row = document.createElement("div"); row.className = "outline-row";
+    const button = makeOutlineButton(item.title, page || 1);
+    if (!page) { button.disabled = true; button.title = "此目录项没有可用的页码"; }
+    row.append(button);
+    if (item.items?.length) {
+      const group = document.createElement("div"); group.className = "outline-group";
+      const children = document.createElement("div"); children.className = "outline-children"; children.hidden = true;
+      const toggle = document.createElement("button"); toggle.className = "outline-toggle"; toggle.textContent = "▸";
+      toggle.setAttribute("aria-label", `展开或收起 ${item.title}`); toggle.setAttribute("aria-expanded", "false");
+      toggle.addEventListener("click", () => { children.hidden = !children.hidden; toggle.textContent = children.hidden ? "▸" : "▾"; toggle.setAttribute("aria-expanded", String(!children.hidden)); });
+      row.prepend(toggle); group.append(row, children); container.append(group);
+      await appendOutline(item.items, children);
+    } else container.append(row);
   }
 }
 
 async function renderDocumentOutline() {
   els.outlineList.innerHTML = "";
   const outline = await state.pdf.getOutline();
-  if (outline?.length) await appendOutline(outline, els.outlineList);
+  if (outline?.length) await appendOutline(groupOutline(outline), els.outlineList);
   else for (let page = 1; page <= state.pdf.numPages; page += 1) els.outlineList.append(makeOutlineButton(`第 ${page} 页`, page));
 }
 
@@ -182,13 +207,8 @@ async function renderPageIntoShell(pageNumber, shell) {
     await page.render({ canvasContext: canvas.getContext("2d"), viewport, transform }).promise;
     const content = await page.getTextContent();
     const textItems = content.items.filter(item => item.str);
-    for (const item of textItems) {
-      const transform = pdfjsLib.Util.transform(viewport.transform, item.transform); const fontSize = Math.max(5, Math.hypot(transform[2], transform[3]));
-      const span = document.createElement("span"); span.textContent = item.str; span.dataset.text = item.str;
-      span.style.left = `${transform[4]}px`; span.style.top = `${transform[5] - fontSize}px`; span.style.fontSize = `${fontSize}px`; span.style.height = `${fontSize * 1.2}px`; span.style.width = `${Math.max(item.width * state.scale, fontSize * .25)}px`;
-      const angle = Math.atan2(transform[1], transform[0]); if (Math.abs(angle) > .001) span.style.transform = `rotate(${angle}rad)`;
-      textLayer.append(span);
-    }
+    shell.style.setProperty("--scale-factor", viewport.scale);
+    await new pdfjsLib.TextLayer({ textContentSource: content, container: textLayer, viewport }).render();
     if (!textItems.length) addScanPageTools(pageNumber, shell, canvas);
     renderHighlights(shell); shell.dataset.rendered = "true";
   } finally {
@@ -270,12 +290,30 @@ async function renderDocumentPages(targetPage = 1) {
   }
 }
 
+const readingHistory = [];
+function rememberReadingPosition() {
+  const shell = pageShellForNumber(state.page);
+  if (!shell) return;
+  readingHistory.push({page:state.page,offset:(els.pdfViewport.getBoundingClientRect().top + 20 - shell.getBoundingClientRect().top)/shell.clientHeight});
+  if (readingHistory.length > 100) readingHistory.shift();
+  $("#backButton").disabled = false;
+}
+async function goBack() {
+  if (state.rendering || !readingHistory.length) return;
+  const previous = readingHistory.pop();
+  clearSelection();
+  scrollToPage(previous.page, "auto");
+  const shell = pageShellForNumber(previous.page);
+  if (shell) { els.pdfViewport.scrollTop += previous.offset * shell.clientHeight; await renderPageIntoShell(previous.page, shell); }
+  $("#backButton").disabled = !readingHistory.length;
+}
+$("#backButton").addEventListener("click", goBack);
 async function renderPage(pageNumber) {
   if (!state.pdf || state.rendering) return;
   const boundedPage = Math.max(1, Math.min(pageNumber, state.pdf.numPages));
   const shell = pageShellForNumber(boundedPage);
   if (!shell) { await renderDocumentPages(boundedPage); return; }
-  scrollToPage(boundedPage); await renderPageIntoShell(boundedPage, shell);
+  rememberReadingPosition(); clearSelection(); scrollToPage(boundedPage, "auto"); await renderPageIntoShell(boundedPage, shell);
 }
 
 function renderHighlights(pageShell = state.pageShell) {
@@ -288,13 +326,32 @@ function renderHighlights(pageShell = state.pageShell) {
 
 function selectionRects(range, pageShell) {
   const pageRect = pageShell.getBoundingClientRect();
-  return [...range.getClientRects()].filter(rect => rect.width > 1 && rect.height > 1).map(rect => ({ left: (rect.left - pageRect.left) / pageRect.width, top: (rect.top - pageRect.top) / pageRect.height, width: rect.width / pageRect.width, height: rect.height / pageRect.height }));
+  const rects = [];
+  // Measure only selected text nodes, not the enclosing span boxes or line breaks.
+  const walker = document.createTreeWalker(pageShell.querySelector('.text-layer'), NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (!range.intersectsNode(node) || !node.textContent.trim()) continue;
+    const part = document.createRange();
+    part.setStart(node, node === range.startContainer ? range.startOffset : 0);
+    part.setEnd(node, node === range.endContainer ? range.endOffset : node.length);
+    for (const rect of part.getClientRects()) {
+      const left = Math.max(rect.left, pageRect.left), top = Math.max(rect.top, pageRect.top);
+      const right = Math.min(rect.right, pageRect.right), bottom = Math.min(rect.bottom, pageRect.bottom);
+      if (right > left && bottom > top) rects.push({left:(left-pageRect.left)/pageRect.width,top:(top-pageRect.top)/pageRect.height,width:(right-left)/pageRect.width,height:(bottom-top)/pageRect.height});
+    }
+  }
+  return rects;
 }
 
+function hideSelectionToolbar() {
+  els.selectionToolbar.classList.remove("visible");
+  els.selectionToolbar.setAttribute("aria-hidden", "true");
+}
 function captureSelection() {
-  const selection = window.getSelection(); if (!selection || selection.rangeCount === 0) return;
-  const range = selection.getRangeAt(0); const node = range.commonAncestorContainer.nodeType === 1 ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement; const pageShell = node?.closest(".page-shell"); if (!pageShell) return;
-  const text = selection.toString().replace(/\s+/g, " ").trim(); if (!text) return;
+  const selection = window.getSelection(); if (!selection || selection.isCollapsed || selection.rangeCount === 0) { hideSelectionToolbar(); return; }
+  const range = selection.getRangeAt(0); const node = range.commonAncestorContainer.nodeType === 1 ? range.commonAncestorContainer : range.commonAncestorContainer.parentElement; const pageShell = node?.closest(".page-shell"); if (!pageShell || !pageShell.querySelector(".text-layer")?.contains(range.startContainer)) { hideSelectionToolbar(); return; }
+  const text = selection.toString().replace(/\s+/g, " ").trim(); if (!text) { hideSelectionToolbar(); return; }
   const page = Number(pageShell.dataset.page) || state.page; state.pageShell = pageShell; updatePageIndicator(page);
   state.selected = { text, page, rects: selectionRects(range, pageShell) }; els.selectedText.textContent = text; els.selectedText.classList.remove("muted");
   const selectionRect = range.getBoundingClientRect(); const readerRect = document.querySelector(".reader-column").getBoundingClientRect();
@@ -316,11 +373,26 @@ function addAnnotation(type) {
   state.annotations.unshift({ id: crypto.randomUUID(), type, text: state.selected.text, note, page: state.selected.page, rects: state.selected.rects, createdAt: new Date().toISOString() }); saveAnnotations(); if (type === "highlight") renderHighlights(state.pageShell); toast(type === "note" ? "笔记已保存" : "已添加高亮");
 }
 
+function removeAnnotation(id) {
+  const item = state.annotations.find(annotation => annotation.id === id);
+  if (!item) return;
+  state.annotations = state.annotations.filter(annotation => annotation.id !== id);
+  saveAnnotations();
+  const shell = pageShellForNumber(item.page);
+  if (shell) renderHighlights(shell);
+  toast(item.type === "highlight" ? "已取消高亮" : "已删除笔记");
+}
+
 function renderAnnotations() {
   els.annotationCount.textContent = state.annotations.length; els.annotationList.innerHTML = "";
   if (!state.annotations.length) { els.annotationList.innerHTML = `<div class="empty-small">选择文字后，可以添加高亮或笔记。</div>`; return; }
-  state.annotations.slice(0, 30).forEach(annotation => {
+  state.annotations.forEach(annotation => {
     const card = document.createElement("div"); card.className = "annotation-card"; card.innerHTML = `<div class="annotation-type">${annotation.type === "note" ? "笔记" : "高亮"}</div><div class="annotation-preview">${escapeHtml(annotation.note || annotation.text)}</div><div class="annotation-meta">第 ${annotation.page} 页</div>`;
+    const remove = document.createElement("button"); remove.className = "annotation-remove";
+    remove.textContent = annotation.type === "highlight" ? "取消高亮" : "删除笔记";
+    remove.setAttribute("aria-label", `${remove.textContent}：第 ${annotation.page} 页 ${annotation.text.slice(0, 30)}`);
+    remove.addEventListener("click", event => { event.stopPropagation(); removeAnnotation(annotation.id); });
+    card.append(remove);
     card.addEventListener("click", () => renderPage(annotation.page)); els.annotationList.append(card);
   });
 }
@@ -416,6 +488,7 @@ async function readStreamingResponse(response, onUpdate) {
 }
 
 async function askModel(prompt, displayQuestion = prompt, options = {}) {
+  if (!state.model) { toast("请先在 Ollama 安装模型，再点击连接或在设置中填写模型名称。"); return; }
   if (state.aiBusy) return; state.aiBusy = true; els.ask.disabled = true; state.liveMessage = beginChatExchange(displayQuestion);
   if (!state.modelEnabled) { updateLiveMessage("当前连接已关闭，请先点击顶部的模型连接按钮。", false); state.liveMessage = null; state.aiBusy = false; els.ask.disabled = false; return; }
   const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 60000);
@@ -483,18 +556,25 @@ els.pageInput.addEventListener("change", event => renderPage(Number(event.target
 els.zoomOut.addEventListener("click", () => { if (!state.pdf || state.rendering) return; state.scale = Math.max(.5, state.scale - .1); els.zoomLabel.textContent = `${Math.round(state.scale * 100)}%`; renderDocumentPages(state.page); });
 els.zoomIn.addEventListener("click", () => { if (!state.pdf || state.rendering) return; state.scale = Math.min(3, state.scale + .1); els.zoomLabel.textContent = `${Math.round(state.scale * 100)}%`; renderDocumentPages(state.page); });
 els.fitWidth.addEventListener("click", fitWidth); els.searchInput.addEventListener("keydown", event => { if (event.key === "Enter") searchDocument(event.target.value); });
+document.addEventListener("selectionchange", () => {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed) hideSelectionToolbar();
+});
+els.selectionToolbar.addEventListener("mousedown", event => event.preventDefault());
+document.addEventListener("keydown", event => { if (event.key === "Escape") clearSelection(); });
+els.pdfViewport.addEventListener("scroll", hideSelectionToolbar);
 document.addEventListener("mouseup", captureSelection); document.addEventListener("keyup", event => { if (event.key === "Shift") captureSelection(); });
 els.clearSelection.addEventListener("click", clearSelection);
-els.selectionToolbar.querySelectorAll("[data-selection-action]").forEach(button => button.addEventListener("click", () => runAction(button.dataset.selectionAction)));
+els.selectionToolbar.querySelectorAll("[data-selection-action]").forEach(button => button.addEventListener("click", () => { runAction(button.dataset.selectionAction); hideSelectionToolbar(); }));
 els.contextChips.querySelectorAll(".context-chip").forEach(chip => chip.addEventListener("click", () => { const key = chip.dataset.context; if (chip.disabled || key === "selection") return; state.contextToggles[key] = !state.contextToggles[key]; updateContextChips(); }));
 els.ask.addEventListener("click", () => { const question = els.question.value.trim(); if (!question) { toast("先写下你的问题"); return; } askModel(buildContextPrompt(question), question); els.question.value = ""; });
 els.question.addEventListener("keydown", event => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") els.ask.click(); });
 els.settings.addEventListener("click", () => { els.baseUrl.value = state.baseUrl; els.model.value = state.model; els.settingsDialog.showModal(); });
-els.settingsForm.addEventListener("submit", event => { event.preventDefault(); state.baseUrl = els.baseUrl.value.trim().replace(/\/$/, "") || "/api"; state.model = els.model.value.trim() || "qwen3.5:9b-mlx"; localStorage.setItem("pdf-studio-base-url", state.baseUrl); localStorage.setItem("pdf-studio-model", state.model); els.modelChip.textContent = state.model; els.settingsDialog.close(); checkOllama(); toast("设置已保存"); });
+els.settingsForm.addEventListener("submit", event => { event.preventDefault(); state.baseUrl = els.baseUrl.value.trim().replace(/\/$/, "") || "/api"; state.model = els.model.value.trim(); localStorage.setItem("pdf-studio-base-url", state.baseUrl); localStorage.setItem("pdf-studio-model", state.model); els.modelChip.textContent = state.model; els.settingsDialog.close(); checkOllama(); toast("设置已保存"); });
 window.addEventListener("resize", () => { if (state.pdf && state.pageShell && window.innerWidth < 860 && !state.rendering) renderDocumentPages(state.page); });
 els.status.addEventListener("click", toggleModelConnection);
 
-els.modelChip.textContent = state.model; checkOllama();
+els.modelChip.textContent = state.model || "自动识别本地模型"; checkOllama();
 
 let progressTimer;
 async function saveReadingProgress() {
@@ -514,17 +594,97 @@ async function showLibrary(mode='home') {
  try {
  const books=(await listBooks()).sort((a,b)=>b.lastOpened-a.lastOpened);
  for(const book of (mode==='all'?books:books.slice(0,mode==='home'?6:20))){
-  const card=document.createElement('button');card.className='book-card';
+  const card=document.createElement('article');card.className='book-card';
+  const open=document.createElement('button');open.className='book-open';open.type='button';open.setAttribute('aria-label',`继续阅读 ${book.name}`);
   const cover=document.createElement('img');cover.src=book.cover || '';cover.alt='书籍封面';
   const title=document.createElement('strong');title.textContent=book.name;
   const info=document.createElement('small');info.textContent=`第 ${book.page} / ${book.pages} 页 · ${new Date(book.lastOpened).toLocaleDateString()}`;
   const progress=document.createElement('progress');progress.max=book.pages;progress.value=book.page;
-  card.append(cover,title,info,progress);card.onclick=async()=>{const stored=await getBook(book.id);await loadPdf(stored.pdf,stored);};grid.append(card);
+  open.append(cover,title,info,progress);open.onclick=async()=>{const stored=await getBook(book.id);if(stored)await loadPdf(stored.pdf,stored);};
+  const remove=document.createElement('button');remove.type='button';remove.className='book-remove';remove.textContent='从书库删除';remove.setAttribute('aria-label',`从书库删除 ${book.name}`);
+  remove.onclick=()=>confirmRemoveBook(book,mode);
+  card.append(open,remove);grid.append(card);
  }
  if(!books.length)grid.textContent='书库还是空的。点击右上角“导入 PDF”添加第一本书。';
  }catch(error){grid.textContent='无法读取书库：'+error.message;}
 }
 document.querySelector('#homeButton').onclick=()=>showLibrary();
+document.querySelector('#brandHomeButton').onclick=()=>showLibrary();
 document.querySelectorAll('[data-library]').forEach(button=>button.onclick=()=>showLibrary(button.dataset.library));
 document.addEventListener('visibilitychange',()=>{if(document.hidden)void saveReadingProgress();});
 void showLibrary();
+
+if (!/Mac/i.test(navigator.platform)) document.querySelector(".composer-label span").textContent = "Ctrl+Enter 发送";
+
+function setTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  localStorage.setItem('yejian-theme', theme);
+  const button = $('#themeButton');
+  button.textContent = theme === 'dark' ? '☀ 亮色' : '☾ 暗色';
+  button.setAttribute('aria-pressed', String(theme === 'dark'));
+}
+setTheme(localStorage.getItem('yejian-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
+$('#themeButton').addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
+
+// Hit-test saved PDF coordinates through the transparent text layer.
+const highlightMenu = document.createElement('div');
+highlightMenu.className = 'highlight-menu'; highlightMenu.hidden = true;
+highlightMenu.setAttribute('role', 'dialog'); highlightMenu.setAttribute('aria-label', '高亮操作');
+const removeHighlightButton = document.createElement('button');
+removeHighlightButton.type = 'button'; removeHighlightButton.textContent = '取消高亮';
+const closeHighlightButton = document.createElement('button');
+closeHighlightButton.type = 'button'; closeHighlightButton.textContent = '关闭';
+highlightMenu.append(removeHighlightButton, closeHighlightButton); document.body.append(highlightMenu);
+let clickedHighlightId = null;
+function closeHighlightMenu() { highlightMenu.hidden = true; clickedHighlightId = null; }
+closeHighlightButton.addEventListener('click', closeHighlightMenu);
+removeHighlightButton.addEventListener('click', () => {
+  if (clickedHighlightId) removeAnnotation(clickedHighlightId);
+  closeHighlightMenu();
+});
+let highlightPointerStart = null;
+els.pdfViewport.addEventListener('pointerdown', event => { highlightPointerStart = {x:event.clientX,y:event.clientY}; });
+els.pdfViewport.addEventListener('click', event => {
+  closeHighlightMenu();
+  if (!highlightPointerStart || Math.hypot(event.clientX-highlightPointerStart.x,event.clientY-highlightPointerStart.y) > 5) return;
+  if (!window.getSelection()?.isCollapsed) return;
+  const shell = event.target.closest('.page-shell'); if (!shell) return;
+  const bounds = shell.getBoundingClientRect();
+  const item = findHighlightAt(state.annotations, Number(shell.dataset.page), (event.clientX-bounds.left)/bounds.width, (event.clientY-bounds.top)/bounds.height);
+  if (!item) return;
+  clickedHighlightId = item.id; hideSelectionToolbar(); highlightMenu.hidden = false;
+  highlightMenu.style.left = `${Math.max(8, Math.min(event.clientX, window.innerWidth-highlightMenu.offsetWidth-8))}px`;
+  highlightMenu.style.top = `${Math.max(8, Math.min(event.clientY+12, window.innerHeight-highlightMenu.offsetHeight-8))}px`;
+  removeHighlightButton.focus({preventScroll:true});
+});
+document.addEventListener('pointerdown', event => { if (!highlightMenu.contains(event.target)) closeHighlightMenu(); });
+document.addEventListener('keydown', event => { if(event.key === 'Escape') closeHighlightMenu(); });
+els.pdfViewport.addEventListener('scroll', closeHighlightMenu);
+window.addEventListener('resize', closeHighlightMenu);
+
+function confirmRemoveBook(book, mode) {
+  const dialog = document.createElement('dialog'); dialog.className = 'settings-dialog';
+  const form = document.createElement('form'); form.method = 'dialog';
+  const title = document.createElement('h2'); title.textContent = `删除《${book.name}》？`;
+  const description = document.createElement('p'); description.className = 'dialog-copy';
+  description.textContent = '将删除 App 内的书籍副本、阅读进度、笔记和对话。电脑里的原始 PDF 不会删除。此操作无法撤销。';
+  const actions = document.createElement('div'); actions.className = 'dialog-actions';
+  const cancel = document.createElement('button'); cancel.className = 'button button-ghost'; cancel.textContent = '取消'; cancel.value = 'cancel'; cancel.autofocus = true;
+  const confirm = document.createElement('button'); confirm.className = 'button button-primary'; confirm.textContent = '删除书籍'; confirm.value = 'delete';
+  actions.append(cancel,confirm);form.append(title,description,actions);dialog.append(form);document.body.append(dialog);
+  dialog.addEventListener('close', async () => {
+    const approved = dialog.returnValue === 'delete'; dialog.remove(); if (!approved) return;
+    try {
+      await deleteBook(book.id);
+      localStorage.removeItem(documentKey(book.id));
+      localStorage.removeItem(`pdf-studio-chat:${documentKey(book.id)}`);
+      if (state.bookId === book.id) {
+        clearTimeout(progressTimer); state.bookId = null; state.documentKey = ''; state.annotations = []; state.chatMessages = [];
+        state.pageObserver?.disconnect(); state.pdf = null; state.pageShell = null; state.textCache.clear(); els.pdfViewport.replaceChildren();
+        clearSelection(); renderAnnotations(); renderStoredChatHistory(); readingHistory.length = 0; $('#backButton').disabled = true;
+      }
+      await showLibrary(mode); toast('已从书库删除，原始 PDF 未改动');
+    } catch (error) { toast('删除失败：' + error.message); }
+  }, {once:true});
+  dialog.showModal();
+}

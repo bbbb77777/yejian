@@ -1,0 +1,4 @@
+const {test}=require('node:test');const assert=require('node:assert/strict');
+test('groups 5.1 and 5.2 under 5, and 5.1.1 under 5.1',async()=>{const {groupOutline}=await import('../outline.mjs');const r=groupOutline(['5 Introduction','5.1 A','5.1.1 B','5.2 C','6 Next'].map(title=>({title})));assert.equal(r.length,2);assert.equal(r[0].items.length,2);assert.equal(r[0].items[0].items[0].title,'5.1.1 B');});
+test('preserves explicit bookmark children without mutating input',async()=>{const {groupOutline}=await import('../outline.mjs');const input=[{title:'Chapter 5',items:[{title:'5.1 Intro'}]},{title:'5.2 Next'}];const r=groupOutline(input);assert.equal(r[0].items.length,2);assert.equal(input[0].items.length,1);});
+test('does not group 50.1 into chapter 5 or invent absent parents',async()=>{const {groupOutline}=await import('../outline.mjs');assert.equal(groupOutline([{title:'5 Hello'},{title:'50.1 World'},{title:'Appendix'},{title:'5.3 Orphan'}]).length,4);});

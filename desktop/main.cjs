@@ -1,7 +1,7 @@
 const {app,BrowserWindow,protocol,net,Menu}=require('electron');
 const path=require('node:path');
 const {pathToFileURL}=require('node:url');
-const {spawn}=require('node:child_process');
+const {ensureOllama}=require('./ollama.cjs');
 protocol.registerSchemesAsPrivileged([{scheme:'yejian',privileges:{standard:true,secure:true,supportFetchAPI:true,stream:true}}]);
 if(process.env.YEJIAN_SMOKE==='1') app.setPath('userData',path.join(require('node:os').tmpdir(),'yejian-smoke-profile'));
 let win;
@@ -11,9 +11,8 @@ async function handle(request){
  if(url.host!=='app') return new Response('Not found',{status:404});
  try{
   if(url.pathname==='/api/ollama-start' && request.method==='POST'){
-   const child=spawn('/usr/bin/open',['-a','Ollama'],{stdio:'ignore'}); child.on('error',()=>{});
-   for(let i=0;i<20;i++) {try {const r=await fetch('http://127.0.0.1:11434/api/tags',{signal:AbortSignal.timeout(1000)});if(r.ok)return json({connected:true});}catch{} await new Promise(r=>setTimeout(r,250));}
-   return json({error:'请安装并打开 Ollama'},503);
+   try { if(await ensureOllama()) return json({connected:true}); } catch { /* installation missing or unavailable */ }
+   return json({error:'无法启动 Ollama，请安装并从系统菜单打开 Ollama 后重试。'},503);
   }
   if(url.pathname==='/api/ollama-status'){
    const r=await fetch('http://127.0.0.1:11434/api/tags',{signal:AbortSignal.timeout(2500)});return json({...await r.json(),connected:r.ok},r.status);
@@ -43,6 +42,6 @@ function createWindow(){
 }
 if(!app.requestSingleInstanceLock())app.quit();else{
  app.on('second-instance',()=>{win?.show();win?.focus();});
- app.whenReady().then(()=>{protocol.handle('yejian',handle);Menu.setApplicationMenu(Menu.buildFromTemplate([{role:'appMenu'},{role:'editMenu'},{role:'viewMenu'},{role:'windowMenu'}]));createWindow();app.on('activate',()=>{if(!BrowserWindow.getAllWindows().length)createWindow();});});
+ app.whenReady().then(()=>{protocol.handle('yejian',handle);Menu.setApplicationMenu(Menu.buildFromTemplate([process.platform==='darwin'?{role:'appMenu'}:{label:'文件',submenu:[{role:'quit',label:'退出'}]},{role:'editMenu'},{role:'viewMenu'},{role:'windowMenu'}]));createWindow();app.on('activate',()=>{if(!BrowserWindow.getAllWindows().length)createWindow();});});
  app.on('window-all-closed',()=>app.quit());
 }
